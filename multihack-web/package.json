@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "standard --fix src/** && standard --fix test/** && tape test/*.js",
-    "build": "browserify src/index.js -i wrtc -s Multihack -o static/js/multihack.js",
+    "build": "browserify src/index.js -s Multihack -o static/js/multihack.js",
     "watch": "watchify src/index.js -i wrtc -s Multihack -o static/js/multihack.js"
   },
   "author": "Thomas Mullen",
@@ -26,7 +26,6 @@
     "file-icons-js": "github:websemantics/file-icons-js",
     "getusermedia": "^2.0.1",
     "inherits": "^2.0.3",
-    "multihack-core": "^2.2.0",
     "mustache": "^2.3.0",
     "p2p-graph": "^1.1.1",
     "is-buffer": "^1.1.6"

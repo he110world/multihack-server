@@ -1,7 +1,7 @@
 var FileSystem = require('./filesystem/filesystem')
 var Interface = require('./interface/interface')
 var Editor = require('./editor/editor')
-var Remote = require('multihack-core')
+var Remote = require('../multihack-core')
 var HyperHostWrapper = require('./network/hyperhostwrapper')
 var util = require('./filesystem/util')
 var Voice = require('./network/voice')
@@ -10,130 +10,134 @@ var lg = lang.get.bind(lang)
 
 function Multihack (config) {
 	var self = this
-	if (!(self instanceof Multihack)) return new Multihack(config)
+	if (!(self instanceof Multihack)) {
+		return new Multihack(config)
+	}
 
-		config = config || {}
+	config = config || {}
 
-		Interface.on('openFile', function (e) {
+	Interface.on('openFile', function (e) {
+		Editor.open(e.path)
+		Interface.fileOpened(e.path)
+	})
+
+	Interface.on('addFile', function (e) {
+		var created = FileSystem.mkfile(e.path)
+
+		if (created) {
+			Interface.treeview.addFile(e.parentElement, FileSystem.get(e.path))
 			Editor.open(e.path)
 			Interface.fileOpened(e.path)
+		}
+		self._remote.createFile(e.path)
+	})
+
+	Interface.on('closeFile', function(e) {
+		if (!e.activePath) {
+			Editor.close()
+		} else {
+			Editor.open(e.activePath)
+		}
+	})
+
+	FileSystem.on('unzipFile', function (file) {
+		file.read(function (content) {
+			self._remote.createFile(file.path, content)
 		})
+	})
 
-		Interface.on('addFile', function (e) {
-			var created = FileSystem.mkfile(e.path)
+	Interface.on('addDir', function (e) {
+		var created = FileSystem.mkdir(e.path)
 
-			if (created) {
-				Interface.treeview.addFile(e.parentElement, FileSystem.get(e.path))
-				Editor.open(e.path)
-				Interface.fileOpened(e.path)
-			}
-			self._remote.createFile(e.path)
-		})
+		if (created) {
+			Interface.treeview.addDir(e.parentElement, FileSystem.get(e.path))
+		}
+		self._remote.createDir(e.path)
+	})
 
-		Interface.on('closeFile', function(e) {
-			if (!e.activePath) {
-				Editor.close()
-			} else {
-				Editor.open(e.activePath)
-			}
-		})
+	Interface.on('removeDir', function (e) {
+		var dir = FileSystem.get(e.path)
+		var workingFile = Editor.getWorkingFile()
 
-		FileSystem.on('unzipFile', function (file) {
-			file.read(function (content) {
-				self._remote.createFile(file.path, content)
-			})
-		})
+		Interface.confirmDelete(dir.name, function () {
+			Interface.treeview.remove(e.parentElement, dir)
 
-		Interface.on('addDir', function (e) {
-			var created = FileSystem.mkdir(e.path)
-
-			if (created) {
-				Interface.treeview.addDir(e.parentElement, FileSystem.get(e.path))
-			}
-			self._remote.createDir(e.path)
-		})
-
-		Interface.on('removeDir', function (e) {
-			var dir = FileSystem.get(e.path)
-			var workingFile = Editor.getWorkingFile()
-
-			Interface.confirmDelete(dir.name, function () {
-				Interface.treeview.remove(e.parentElement, dir)
-
-				FileSystem.getContained(e.path).forEach(function (file) {
-					if (workingFile && file.path === workingFile.path) {
-						Editor.close()
-					}
-					self._remote.deleteFile(file.path)
-					Interface.fileDeleted(file.path)
-				})
-				self._remote.deleteFile(e.path)
-				Interface.fileDeleted(e.path)
-			})
-		})
-
-		Interface.on('deleteCurrent', function (e) {
-			var workingFile = Editor.getWorkingFile()
-			if (!workingFile) return
-
-				Interface.confirmDelete(workingFile.name, function () {
+			FileSystem.getContained(e.path).forEach(function (file) {
+				if (workingFile && file.path === workingFile.path) {
 					Editor.close()
-					var workingPath = workingFile.path
-					var parentElement = Interface.treeview.getParentElement(workingPath)
-					if (parentElement) {
-						Interface.treeview.remove(parentElement, FileSystem.get(workingPath))
-					}
-					FileSystem.delete(workingPath)
-					self._remote.deleteFile(workingPath)
-					Interface.fileDeleted(workingPath)
-				})
+				}
+				self._remote.deleteFile(file.path)
+				Interface.fileDeleted(file.path)
+			})
+			self._remote.deleteFile(e.path)
+			Interface.fileDeleted(e.path)
+		})
+	})
+
+	Interface.on('deleteCurrent', function (e) {
+		var workingFile = Editor.getWorkingFile()
+		if (!workingFile) {
+			return
+		}
+
+		Interface.confirmDelete(workingFile.name, function () {
+			Editor.close()
+			var workingPath = workingFile.path
+			var parentElement = Interface.treeview.getParentElement(workingPath)
+			if (parentElement) {
+				Interface.treeview.remove(parentElement, FileSystem.get(workingPath))
+			}
+			FileSystem.delete(workingPath)
+			self._remote.deleteFile(workingPath)
+			Interface.fileDeleted(workingPath)
+		})
+	})
+
+	self.embed = util.getParameterByName('embed') || null
+	self.roomID = util.getParameterByName('room') || null
+	self.hostname = config.hostname
+
+	Interface.on('saveAs', function (saveType) {
+		FileSystem.getContained('').forEach(function (file) {
+			file.write(self._remote.getContent(file.path))
+		})
+		FileSystem.saveProject(saveType, function (success) {
+			if (success) {
+				Interface.alert(lg('save_success_title'), lg('save_success'))
+			} else {
+				Interface.alert(lg('save_fail_title'), lg('save_fail'))
+			}
+		})
+	})
+
+	Interface.on('deploy', function () {
+		HyperHostWrapper.on('error', function (err) {
+			Interface.alert(lg('deploy_fail_title'), err)
 		})
 
-		self.embed = util.getParameterByName('embed') || null
-		self.roomID = util.getParameterByName('room') || null
-		self.hostname = config.hostname
+		HyperHostWrapper.on('ready', function (url) {
+			Interface.alertHTML(lg('deploy_title'), lg('deploy_success', {url: url}))
+		})
 
-		Interface.on('saveAs', function (saveType) {
-			FileSystem.getContained('').forEach(function (file) {
-				file.write(self._remote.getContent(file.path))
-			})
-			FileSystem.saveProject(saveType, function (success) {
-				if (success) {
-					Interface.alert(lg('save_success_title'), lg('save_success'))
-				} else {
-					Interface.alert(lg('save_fail_title'), lg('save_fail'))
+		HyperHostWrapper.deploy(FileSystem.getTree())
+	})
+
+	Interface.hideOverlay()
+	if (self.embed) {
+		self._initRemote()
+	} else {
+		self._initRemote(function () {
+			Interface.getProject(function (project) {
+				if (project) {
+					Interface.showOverlay()
+					FileSystem.loadProject(project, function (tree) {
+						Interface.treeview.rerender(tree)
+						Interface.hideOverlay()
+					})
 				}
 			})
 		})
-
-		Interface.on('deploy', function () {
-			HyperHostWrapper.on('error', function (err) {
-				Interface.alert(lg('deploy_fail_title'), err)
-			})
-
-			HyperHostWrapper.on('ready', function (url) {
-				Interface.alertHTML(lg('deploy_title'), lg('deploy_success', {url: url}))
-			})
-
-			HyperHostWrapper.deploy(FileSystem.getTree())
-		})
-
-		Interface.hideOverlay()
-		if (self.embed) {
-			self._initRemote()
-		} else {
-			self._initRemote(function () {
-				Interface.getProject(function (project) {
-					if (project) {
-						Interface.showOverlay()
-						FileSystem.loadProject(project, function (tree) {
-							Interface.treeview.rerender(tree)
-							Interface.hideOverlay()
-						})
-					}
-				})
-			})
-		}
+	}
 }
 
 Multihack.prototype._initRemote = function (cb) {
@@ -198,8 +202,10 @@ Multihack.prototype._initRemote = function (cb) {
 			Interface.treeview.rerender(FileSystem.getTree())
 		})
 		self._remote.on('lostPeer', function (peer) {
-			if (self.embed) return
-				Interface.flashTooltip('tooltip-lostpeer', lg('lost_connection', {nickname: peer.metadata.nickname}))
+			if (self.embed) {
+				return
+			}
+			Interface.flashTooltip('tooltip-lostpeer', lg('lost_connection', {nickname: peer.metadata.nickname}))
 		})
 
 		Editor.on('change', function (data) {
